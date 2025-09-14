@@ -1,0 +1,43 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go build output
+*.test
+*.out
+*.o
+*.a
+
+# Go coverage reports
+*.cover
+*.cov
+*.prof
+*.profraw
+*.gcov
+*.lcov
+*.gcda
+*.gcno
+
+# Output of `go build`
+*.log
+*.tmp
+*.swp
+*.swo
+*.db
+*.sqlite
+
+# IDE and editor files
+.idea/
+.vscode/
+*.iml
+
+# Mac / Linux / Windows junk files
+.DS_Store
+Thumbs.db
+
+# Temporary Go workspace files
+go.work
+go.work.sum
