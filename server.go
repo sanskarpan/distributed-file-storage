@@ -114,13 +114,40 @@ type MessageGetFile struct {
 }
 
 func (s *FileServer) Get(key string) (io.Reader, error) {
+	// Check if file exists locally first
 	if s.store.Has(s.ID, key) {
-		fmt.Printf("[%s] serving file (%s) from local disk\n", s.Transport.Addr(), key)
+		s.logger.Info("Serving file (%s) from local disk", key)
 		_, r, err := s.store.Read(s.ID, key)
-		return r, err
+		if err != nil {
+			return nil, errors.Wrap(err, errors.StorageError, "failed to read local file")
+		}
+		return r, nil
 	}
 
-	fmt.Printf("[%s] dont have file (%s) locally, fetching from network...\n", s.Transport.Addr(), key)
+	s.logger.Info("File (%s) not found locally, fetching from network", key)
+
+	// Use retry logic for network operations
+	err := retry.DoSimple(func() error {
+		return s.fetchFileFromNetwork(key)
+	})
+	
+	if err != nil {
+		return nil, errors.Wrap(err, errors.NetworkError, "failed to fetch file from network")
+	}
+
+	// Read the file after successful network fetch
+	_, r, err := s.store.Read(s.ID, key)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.StorageError, "failed to read file after network fetch")
+	}
+	
+	return r, nil
+}
+
+func (s *FileServer) fetchFileFromNetwork(key string) error {
+	if len(s.peers) == 0 {
+		return errors.NewNetworkError("no peers available for file retrieval")
+	}
 
 	msg := Message{
 		Payload: MessageGetFile{
@@ -130,29 +157,49 @@ func (s *FileServer) Get(key string) (io.Reader, error) {
 	}
 
 	if err := s.broadcast(&msg); err != nil {
-		return nil, err
+		return err
 	}
 
-	time.Sleep(time.Millisecond * 500)
+	// Wait for responses with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	for _, peer := range s.peers {
+	select {
+	case <-ctx.Done():
+		return errors.NewTimeoutError("timeout waiting for file from network")
+	case <-time.After(500 * time.Millisecond):
+		// Continue with processing responses
+	}
+
+	var lastErr error
+	for addr, peer := range s.peers {
 		// First read the file size so we can limit the amount of bytes that we read
 		// from the connection, so it will not keep hanging.
 		var fileSize int64
-		binary.Read(peer, binary.LittleEndian, &fileSize)
+		if err := binary.Read(peer, binary.LittleEndian, &fileSize); err != nil {
+			s.logger.Warn("Failed to read file size from peer %s: %v", addr, err)
+			lastErr = err
+			continue
+		}
 
 		n, err := s.store.WriteDecrypt(s.EncKey, s.ID, key, io.LimitReader(peer, fileSize))
 		if err != nil {
-			return nil, err
+			s.logger.Warn("Failed to write file from peer %s: %v", addr, err)
+			lastErr = err
+			peer.CloseStream()
+			continue
 		}
 
-		fmt.Printf("[%s] received (%d) bytes over the network from (%s)", s.Transport.Addr(), n, peer.RemoteAddr())
-
+		s.logger.Info("Received (%d) bytes from peer %s", n, addr)
 		peer.CloseStream()
+		return nil // Success
 	}
 
-	_, r, err := s.store.Read(s.ID, key)
-	return r, err
+	if lastErr != nil {
+		return lastErr
+	}
+	
+	return errors.NewNetworkError("no peers provided the requested file")
 }
 
 func (s *FileServer) Store(key string, r io.Reader) error {
