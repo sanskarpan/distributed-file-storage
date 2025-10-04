@@ -61,14 +61,38 @@ func NewFileServer(opts FileServerOpts) *FileServer {
 func (s *FileServer) broadcast(msg *Message) error {
 	buf := new(bytes.Buffer)
 	if err := gob.NewEncoder(buf).Encode(msg); err != nil {
-		return err
+		return errors.Wrap(err, errors.InternalError, "failed to encode broadcast message")
 	}
 
-	for _, peer := range s.peers {
-		peer.Send([]byte{p2p.IncomingMessage})
-		if err := peer.Send(buf.Bytes()); err != nil {
-			return err
+	s.logger.Debug("Broadcasting message to %d peers", len(s.peers))
+	
+	var lastErr error
+	successCount := 0
+	
+	for addr, peer := range s.peers {
+		if err := peer.Send([]byte{p2p.IncomingMessage}); err != nil {
+			s.logger.Warn("Failed to send message header to peer %s: %v", addr, err)
+			lastErr = err
+			continue
 		}
+		
+		if err := peer.Send(buf.Bytes()); err != nil {
+			s.logger.Warn("Failed to send message body to peer %s: %v", addr, err)
+			lastErr = err
+			continue
+		}
+		
+		successCount++
+	}
+
+	if successCount == 0 && len(s.peers) > 0 {
+		return errors.Wrap(lastErr, errors.NetworkError, "failed to broadcast to any peers")
+	}
+	
+	if successCount < len(s.peers) {
+		s.logger.Warn("Broadcast partially failed: %d/%d peers reached", successCount, len(s.peers))
+	} else {
+		s.logger.Debug("Broadcast successful to all %d peers", successCount)
 	}
 
 	return nil
