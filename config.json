@@ -1,0 +1,14 @@
+{
+  "listen_addr": ":3000",
+  "storage_root": "storage",
+  "bootstrap_nodes": [],
+  "log_level": "INFO",
+  "log_file": "",
+  "encryption_enabled": true,
+  "encryption_key": "",
+  "max_connections": 100,
+  "read_timeout_seconds": 30,
+  "write_timeout_seconds": 30,
+  "max_storage_size_bytes": 1073741824,
+  "replication_factor": 2
+}
