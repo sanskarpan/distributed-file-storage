@@ -71,7 +71,10 @@ func (t *TCPTransport) Consume() <-chan RPC {
 
 // Close implements the Transport interface.
 func (t *TCPTransport) Close() error {
-	return t.listener.Close()
+	if t.listener != nil {
+		return t.listener.Close()
+	}
+	return nil
 }
 
 // Dial implements the Transport interface.
