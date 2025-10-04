@@ -2,15 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"io"
-	"log"
 	"sync"
 	"time"
 
+	"github.com/anthdm/foreverstore/errors"
+	"github.com/anthdm/foreverstore/logger"
 	"github.com/anthdm/foreverstore/p2p"
+	"github.com/anthdm/foreverstore/retry"
 )
 
 type FileServerOpts struct {
@@ -30,6 +33,7 @@ type FileServer struct {
 
 	store  *Store
 	quitch chan struct{}
+	logger *logger.Logger
 }
 
 func NewFileServer(opts FileServerOpts) *FileServer {
@@ -42,11 +46,15 @@ func NewFileServer(opts FileServerOpts) *FileServer {
 		opts.ID = generateID()
 	}
 
+	// Create a logger with the server's transport address as prefix
+	serverLogger := logger.WithPrefix(fmt.Sprintf("SERVER[%s]", opts.Transport.Addr()))
+
 	return &FileServer{
 		FileServerOpts: opts,
 		store:          NewStore(storeOpts),
 		quitch:         make(chan struct{}),
 		peers:          make(map[string]p2p.Peer),
+		logger:         serverLogger,
 	}
 }
 
