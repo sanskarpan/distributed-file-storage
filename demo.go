@@ -69,7 +69,8 @@ func main() {
 	
 	nodes := []*FileServer{node1, node2, node3}
 	
-	for i, (filename, content) range files {
+	i := 0
+	for filename, content := range files {
 		node := nodes[i%len(nodes)]
 		nodeNum := (i % len(nodes)) + 1
 		
