@@ -1,17 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/anthdm/foreverstore/config"
 	"github.com/anthdm/foreverstore/logger"
-	"github.com/anthdm/foreverstore/p2p"
 )
 
 // Import the main package types
