@@ -85,7 +85,8 @@ func Do(ctx context.Context, config RetryConfig, fn RetryableFunc) error {
 		// Add jitter if enabled
 		if config.Jitter {
 			jitter := time.Duration(float64(delay) * 0.1)
-			delay += time.Duration(float64(jitter) * (2*time.Now().UnixNano()%2 - 1))
+			jitterMultiplier := float64(2*time.Now().UnixNano()%2 - 1)
+			delay += time.Duration(float64(jitter) * jitterMultiplier)
 		}
 	}
 
