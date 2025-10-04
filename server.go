@@ -335,7 +335,7 @@ func (s *FileServer) handleMessage(from string, msg *Message) error {
 func (s *FileServer) handleMessageGetFile(from string, msg MessageGetFile) error {
 	if !s.store.Has(msg.ID, msg.Key) {
 		err := errors.NewFileNotFoundError(msg.Key)
-		s.logger.Warn("File not found for peer %s: %s", from, msg.Key)
+		s.logger.Debug("File not found for peer %s: %s", from, msg.Key)
 		return err
 	}
 
