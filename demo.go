@@ -84,6 +84,7 @@ func main() {
 		}
 		
 		time.Sleep(100 * time.Millisecond) // Allow replication time
+		i++
 	}
 	
 	fmt.Println("\n📥 Retrieving files from different nodes...")
