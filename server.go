@@ -320,9 +320,13 @@ func (s *FileServer) loop() {
 func (s *FileServer) handleMessage(from string, msg *Message) error {
 	switch v := msg.Payload.(type) {
 	case MessageStoreFile:
+		s.logger.Debug("Handling store file message from %s", from)
 		return s.handleMessageStoreFile(from, v)
 	case MessageGetFile:
+		s.logger.Debug("Handling get file message from %s", from)
 		return s.handleMessageGetFile(from, v)
+	default:
+		s.logger.Warn("Unknown message type from %s", from)
 	}
 
 	return nil
@@ -330,68 +334,93 @@ func (s *FileServer) handleMessage(from string, msg *Message) error {
 
 func (s *FileServer) handleMessageGetFile(from string, msg MessageGetFile) error {
 	if !s.store.Has(msg.ID, msg.Key) {
-		return fmt.Errorf("[%s] need to serve file (%s) but it does not exist on disk", s.Transport.Addr(), msg.Key)
-	}
-
-	fmt.Printf("[%s] serving file (%s) over the network\n", s.Transport.Addr(), msg.Key)
-
-	fileSize, r, err := s.store.Read(msg.ID, msg.Key)
-	if err != nil {
+		err := errors.NewFileNotFoundError(msg.Key)
+		s.logger.Warn("File not found for peer %s: %s", from, msg.Key)
 		return err
 	}
 
+	s.logger.Info("Serving file (%s) to peer %s", msg.Key, from)
+
+	fileSize, r, err := s.store.Read(msg.ID, msg.Key)
+	if err != nil {
+		return errors.Wrap(err, errors.StorageError, "failed to read file for serving")
+	}
+
 	if rc, ok := r.(io.ReadCloser); ok {
-		fmt.Println("closing readCloser")
-		defer rc.Close()
+		defer func() {
+			if err := rc.Close(); err != nil {
+				s.logger.Warn("Failed to close file reader: %v", err)
+			}
+		}()
 	}
 
 	peer, ok := s.peers[from]
 	if !ok {
-		return fmt.Errorf("peer %s not in map", from)
+		return errors.NewConnectionError(fmt.Sprintf("peer %s not found", from))
 	}
 
 	// First send the "incomingStream" byte to the peer and then we can send
 	// the file size as an int64.
-	peer.Send([]byte{p2p.IncomingStream})
-	binary.Write(peer, binary.LittleEndian, fileSize)
+	if err := peer.Send([]byte{p2p.IncomingStream}); err != nil {
+		return errors.Wrap(err, errors.NetworkError, "failed to send stream header")
+	}
+	
+	if err := binary.Write(peer, binary.LittleEndian, fileSize); err != nil {
+		return errors.Wrap(err, errors.NetworkError, "failed to send file size")
+	}
+	
 	n, err := io.Copy(peer, r)
 	if err != nil {
-		return err
+		return errors.Wrap(err, errors.NetworkError, "failed to send file data")
 	}
 
-	fmt.Printf("[%s] written (%d) bytes over the network to %s\n", s.Transport.Addr(), n, from)
-
+	s.logger.Info("Sent file (%s) to peer %s: %d bytes", msg.Key, from, n)
 	return nil
 }
 
 func (s *FileServer) handleMessageStoreFile(from string, msg MessageStoreFile) error {
 	peer, ok := s.peers[from]
 	if !ok {
-		return fmt.Errorf("peer (%s) could not be found in the peer list", from)
+		return errors.NewConnectionError(fmt.Sprintf("peer %s not found", from))
 	}
+
+	s.logger.Debug("Receiving file from peer %s: %s (%d bytes)", from, msg.Key, msg.Size)
 
 	n, err := s.store.Write(msg.ID, msg.Key, io.LimitReader(peer, msg.Size))
 	if err != nil {
-		return err
+		return errors.Wrap(err, errors.StorageError, "failed to write file from peer")
 	}
 
-	fmt.Printf("[%s] written %d bytes to disk\n", s.Transport.Addr(), n)
+	s.logger.Info("Stored file from peer %s: %s (%d bytes)", from, msg.Key, n)
 
 	peer.CloseStream()
-
 	return nil
 }
 
 func (s *FileServer) bootstrapNetwork() error {
+	if len(s.BootstrapNodes) == 0 {
+		s.logger.Info("No bootstrap nodes configured")
+		return nil
+	}
+
+	s.logger.Info("Bootstrapping network with %d nodes", len(s.BootstrapNodes))
+	
 	for _, addr := range s.BootstrapNodes {
 		if len(addr) == 0 {
 			continue
 		}
 
 		go func(addr string) {
-			fmt.Printf("[%s] attemping to connect with remote %s\n", s.Transport.Addr(), addr)
-			if err := s.Transport.Dial(addr); err != nil {
-				log.Println("dial error: ", err)
+			s.logger.Info("Attempting to connect to bootstrap node: %s", addr)
+			
+			err := retry.DoSimple(func() error {
+				return s.Transport.Dial(addr)
+			})
+			
+			if err != nil {
+				s.logger.Error("Failed to connect to bootstrap node %s: %v", addr, err)
+			} else {
+				s.logger.Info("Successfully connected to bootstrap node: %s", addr)
 			}
 		}(addr)
 	}
@@ -400,16 +429,17 @@ func (s *FileServer) bootstrapNetwork() error {
 }
 
 func (s *FileServer) Start() error {
-	fmt.Printf("[%s] starting fileserver...\n", s.Transport.Addr())
+	s.logger.Info("Starting file server on %s", s.Transport.Addr())
 
 	if err := s.Transport.ListenAndAccept(); err != nil {
-		return err
+		return errors.Wrap(err, errors.NetworkError, "failed to start transport listener")
 	}
 
-	s.bootstrapNetwork()
+	if err := s.bootstrapNetwork(); err != nil {
+		s.logger.Warn("Bootstrap network failed: %v", err)
+	}
 
 	s.loop()
-
 	return nil
 }
 
